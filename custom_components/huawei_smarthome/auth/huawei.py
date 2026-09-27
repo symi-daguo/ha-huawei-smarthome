@@ -7,6 +7,7 @@ import base64
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 import json
+import logging
 import re
 import time
 import uuid
@@ -40,6 +41,9 @@ from ..errors import (
 )
 from ..domain.models import AuthSession
 from .interface import LoginChallenge, LoginStart
+
+
+_LOGGER = logging.getLogger(__name__)
 
 
 SCOPE_FOR_CODE = (
@@ -168,6 +172,16 @@ class HuaweiSmartHomeAuthProvider:
         result_code = _first(fields, "resultCode")
         if response.status < 400 and result_code == "0":
             return LoginStart(session=self._finish_login(account, fields))
+
+        # 诊断：登录被拒时把华为的原始说明记录下来（手机号/邮箱已脱敏）。
+        # 用于区分「账号密码错误」与「需要设备验证但不知道发到哪」这两种情况，
+        # 后者会把验证目标放在 errorDesc 里。
+        _LOGGER.warning(
+            "Huawei SmartHome loginV3 detail: http=%s resultCode=%s errorDesc=%s",
+            response.status,
+            result_code,
+            _redact(_first(fields, "errorDesc")),
+        )
 
         challenge = _extract_challenge(fields)
         if challenge is None:
@@ -569,6 +583,26 @@ def _urllib_transport(
 def _first(fields: Mapping[str, list[str]], key: str) -> str | None:
     values = fields.get(key)
     return values[0] if values else None
+
+
+_PHONE_PATTERN = re.compile(r"(\d{3})\d{4,}(\d{3,4})")
+_EMAIL_PATTERN = re.compile(r"([A-Za-z0-9._%+-])[A-Za-z0-9._%+-]*(@[A-Za-z0-9.-]+)")
+
+
+def _redact(value: str | None, limit: int = 800) -> str:
+    """Mask phone numbers and e-mail addresses before writing a diagnostic line.
+
+    The account service echoes the verification target inside ``errorDesc``; that
+    is exactly the information a user needs when they cannot find the code, so we
+    keep it - but never log it in full.
+    """
+
+    if not value:
+        return "(empty)"
+    text = " ".join(str(value).split())
+    text = _PHONE_PATTERN.sub(r"\1****\2", text)
+    text = _EMAIL_PATTERN.sub(r"\1***\2", text)
+    return text[:limit]
 
 
 def _parse_form(body: bytes) -> dict[str, list[str]]:
