@@ -9,12 +9,28 @@ from ..domain.models import AuthSession
 
 
 @dataclass(frozen=True, slots=True)
+class ChallengeOption:
+    """One verification channel offered by the account service.
+
+    ``sent`` is the account service's own flag: ``False`` means the channel is
+    merely *available* and no code has been dispatched yet. Treating it as
+    "already sent" is why a user can end up staring at a code field that will
+    never be filled.
+    """
+
+    name: str
+    account_type: str
+    sent: bool
+
+
+@dataclass(frozen=True, slots=True)
 class LoginChallenge:
     """Challenge information shown to the user."""
 
     prompt: str
     challenge_name: str
     challenge_type: str
+    options: tuple[ChallengeOption, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

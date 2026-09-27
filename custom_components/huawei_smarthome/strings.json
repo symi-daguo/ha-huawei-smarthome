@@ -11,7 +11,7 @@
       },
       "challenge": {
         "title": "Device verification",
-        "description": "{prompt}.\n\n**Code sent to: {challenge_target}** (this line is authoritative)\n\nWhere to look, in order:\n1. Huawei Smart Life app on the phone -> Me -> Message centre\n2. SMS on the account's bound security phone number\n3. Mail on the account's bound security email\n4. Huawei ID popup or message on any other device signed in to the same account\n\nNote: this is Huawei's own protection for a **new device sign-in**, triggered server-side, not an extra check added by this integration. Once it passes, the integration reuses the same device identity and will not ask again.",
+        "description": "{prompt}.\n\n**Code sent to: {challenge_target}**\n\nAvailable channels: {challenge_channels}\n\nEnter the code you received.\n\nTwo notes: (1) sign in with the **phone number** bound to the Huawei ID - a username or e-mail address will be rejected; (2) if a channel above is no longer yours, update the binding under Huawei ID -> Personal information first, otherwise no code can arrive.",
         "data": {
           "challenge_code": "Challenge code"
         }

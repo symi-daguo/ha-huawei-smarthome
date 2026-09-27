@@ -145,18 +145,31 @@ class HuaweiSmartHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         description_placeholders = {}
         if self._challenge is not None:
-            # 华为在 errorDesc.authCodeSentList 里会给出验证码的**发送目标**
-            # （掩码手机号 / 邮箱等）。只显示固定的 prompt 会让用户无从下手，
-            # 所以这里把目标一起展示，并在日志里留一条便于排查。
+            # 华为在 errorDesc.authCodeSentList 里会给出验证码的**发送渠道**
+            # （掩码手机号 / 邮箱等）。只显示固定的 prompt 会让用户无从下手。
             target = self._challenge.challenge_name or "（华为未返回发送目标）"
             description_placeholders = {
                 "prompt": self._challenge.prompt,
                 "challenge_target": target,
             }
             _LOGGER.warning(
-                "Huawei SmartHome device verification required: target=%s type=%s",
+                "Huawei SmartHome device verification required: target=%s type=%s "
+                "channels=%s",
                 target,
                 self._challenge.challenge_type,
+                [
+                    f"{item.name}:{'sent' if item.sent else 'pending'}"
+                    for item in self._challenge.options
+                ],
+            )
+
+        # 华为返回的 authCodeSentList 里可能同时给出多个验证渠道（手机号 / 邮箱），
+        # 原实现只取第一个，用户不知道还有别的选择。这里把它们全部列出来，
+        # 但**不额外增加步骤**：流程与上游保持一致，直接输入验证码即可。
+        options = self._challenge.options if self._challenge is not None else ()
+        if options:
+            description_placeholders["challenge_channels"] = " / ".join(
+                option.name for option in options
             )
         return self.async_show_form(
             step_id="challenge",

@@ -40,7 +40,7 @@ from ..errors import (
     TransientAuthenticationError,
 )
 from ..domain.models import AuthSession
-from .interface import LoginChallenge, LoginStart
+from .interface import ChallengeOption, LoginChallenge, LoginStart
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -183,21 +183,24 @@ class HuaweiSmartHomeAuthProvider:
             _redact(_first(fields, "errorDesc")),
         )
 
-        challenge = _extract_challenge(fields)
-        if challenge is None:
+        options = _extract_challenge_options(fields)
+        if not options:
             raise InvalidCredentialsError("Huawei SmartHome account login rejected")
-        challenge_name, challenge_type = challenge
+        # 已发送的渠道优先；若一个都没发（sent 全为 false），先取第一个作为默认，
+        # 由 config_flow 引导用户挑选渠道并主动请求发送。
+        selected = next((item for item in options if item.sent), options[0])
         self._pending = _PendingLogin(
             account=account,
             encrypted_password=encrypted_password,
-            challenge_name=challenge_name,
-            challenge_type=challenge_type,
+            challenge_name=selected.name,
+            challenge_type=selected.account_type,
         )
         return LoginStart(
             challenge=LoginChallenge(
-                prompt="请在另一台华为设备上查看挑战码",
-                challenge_name=challenge_name,
-                challenge_type=challenge_type,
+                prompt="华为账号要求对本设备的这次登录做一次验证",
+                challenge_name=selected.name,
+                challenge_type=selected.account_type,
+                options=options,
             )
         )
 
@@ -609,32 +612,57 @@ def _parse_form(body: bytes) -> dict[str, list[str]]:
     return parse_qs(body.decode("utf-8", errors="replace"), keep_blank_values=True)
 
 
-def _extract_challenge(fields: Mapping[str, list[str]]) -> tuple[str, str] | None:
+def _is_sent(item: Mapping[str, Any]) -> bool:
+    """Read the account service's "code already dispatched" flag.
+
+    The flag shows up as ``"1"``, ``1`` or ``true`` depending on the service
+    version. A strict ``str(value) == "1"`` comparison treats ``true`` as "not
+    sent" and falls through to the first channel - which is how a user ends up
+    waiting for a code that was never dispatched to that channel at all.
+    """
+
+    value = item.get("sent")
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true"}
+
+
+def _extract_challenge_options(
+    fields: Mapping[str, list[str]],
+) -> tuple[ChallengeOption, ...]:
+    """Return every verification channel the account service offers.
+
+    All of them are kept, not just the first: the phone number may be dead while
+    the bound e-mail still works, and with only one channel surfaced the user has
+    no way to switch.
+    """
+
     raw = _first(fields, "errorDesc")
     if not raw:
-        return None
+        return ()
     try:
         details = json.loads(raw)
     except json.JSONDecodeError:
-        return None
+        return ()
     items = details.get("authCodeSentList") if isinstance(details, dict) else None
     if not isinstance(items, list):
-        return None
-    selected = next(
-        (
-            item
-            for item in items
-            if isinstance(item, dict) and str(item.get("sent")) == "1"
-        ),
-        next((item for item in items if isinstance(item, dict)), None),
-    )
-    if not isinstance(selected, dict):
-        return None
-    name = selected.get("name")
-    account_type = selected.get("accountType")
-    if not isinstance(name, str) or account_type is None:
-        return None
-    return name, str(account_type)
+        return ()
+    options: list[ChallengeOption] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        name = item.get("name")
+        account_type = item.get("accountType")
+        if not isinstance(name, str) or not name or account_type is None:
+            continue
+        options.append(
+            ChallengeOption(
+                name=name,
+                account_type=str(account_type),
+                sent=_is_sent(item),
+            )
+        )
+    return tuple(options)
 
 
 def _json_object(body: bytes) -> dict[str, Any]:
